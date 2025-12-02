@@ -19,10 +19,11 @@ frame = cv2.imread('Bosch_image.tif')
 
 frame_s = cv2.resize(frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_CUBIC)
 
-#cv2.imshow('Resized_image', frame_s)
-#cv2.imshow('Resized_image', frame)
+# Create window first, then trackbar
+cv2.namedWindow('Resized_image')
+cv2.imshow('Resized_image', frame_s)
 
-cv2.createTrackbar('T', 'Resized_image', 0, 255, lambda x: None)
+cv2.createTrackbar('T', 'Resized_image', 180, 255, lambda x: None)
 
 
 #GRB 2 Gray
@@ -30,15 +31,21 @@ gray = cv2.cvtColor(frame_s, cv2.COLOR_BGR2GRAY)  #grayscale image
 
 
 t = cv2.getTrackbarPos('T', 'Resized_image')
-#t = 127
+if t == 0:
+    t = 180  # Higher threshold to reduce background noise
 _, frame_t = cv2.threshold(gray, t, 255, cv2.THRESH_BINARY)
-#cv2.imshow('Binary', frame_t)
+cv2.imshow('Binary', frame_t)  # Show binary image to see threshold effect
 
 #find contours
 contours, _ = cv2.findContours(frame_t, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 # concatenate all contours
 import numpy as np
 c = np.concatenate(contours)
+
+# Get bounding box of all contours used for fitLine
+fit_x, fit_y, fit_w, fit_h = cv2.boundingRect(c)
+# Draw bounding box on which fitLine is based
+cv2.rectangle(frame_s, (fit_x, fit_y), (fit_x + fit_w, fit_y + fit_h), (255, 0, 0), 2)
 
 #Fit center line
 rows, cols = gray.shape[:2]
@@ -47,12 +54,16 @@ T1 = int((-x[0] * vy[0] / vx[0]) + y[0])                         #left
 T2 = int(((cols - x[0]) * vy[0] / vx[0]) + y[0])                 #right
 
 import math as m
-angle_rad = m.atan(abs((T2 - T1) / cols))
-if T2 - T1 < 0:
-    angle_rad = -angle_rad
+angle_rad = m.atan((T2 - T1) / cols)
 
 angle_deg = angle_rad * 180.0 / m.pi
-print('Angle in degrees: ', angle_deg)
+print('='*50)
+print('TEXT ANGLE ANALYSIS')
+print('='*50)
+print(f'Angle in radians: {angle_rad:.4f}')
+print(f'Angle in degrees: {angle_deg:.4f}')
+print('='*50)
+# Rotate to level the text
 M = cv2.getRotationMatrix2D(((cols-1)/2.0, (rows-1)/2.0), angle_deg, 1)
 frame_rot = cv2.warpAffine(gray, M, (cols, rows))
 
@@ -69,7 +80,13 @@ c = np.concatenate(contours)
 br_x, br_y, br_w, br_h = cv2.boundingRect(c)
 
 frame_crop = frame_rot[ br_y:br_y+br_h, br_x:br_x+br_w ]
-cv2.imshow('Cropped_image', frame_crop)
+
+# Draw bounding rectangle on the rotated image for visualization
+frame_rot_vis = cv2.cvtColor(frame_rot, cv2.COLOR_GRAY2BGR)
+cv2.rectangle(frame_rot_vis, (br_x, br_y), (br_x + br_w, br_y + br_h), (0, 255, 0), 2)
+# cv2.imshow('Rotated with Bounding Box', frame_rot_vis)
+
+# cv2.imshow('Cropped_image', frame_crop)
 
 
 
@@ -86,15 +103,41 @@ def center_of_mass(cnt):
 _, frame_t = cv2.threshold(frame_crop, t, 255, cv2.THRESH_BINARY)
 contours, _ = cv2.findContours(frame_t, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
+# Create a color copy for visualization
+frame_crop_color = cv2.cvtColor(frame_crop, cv2.COLOR_GRAY2BGR)
+
 centers = []
 for cnt in contours:
-    x, y = center_of_mass(cnt)
-    _, _, w, h = cv2.boundingRect(cnt)
+    result = center_of_mass(cnt)
+    if result is None:
+        continue  # Skip contours with zero area
+    x, y = result
+    bx, by, w, h = cv2.boundingRect(cnt)
     A = cv2.contourArea(cnt)
+    
+    # Filter out very small or very large contours (noise and outer boundary)
+    if A < 50 or A > frame_crop.shape[0] * frame_crop.shape[1] * 0.5:
+        continue
+    
     centers.append([x, y, w, h, A])
-    frame_crop = cv2.circle(frame_crop, (x, y), 5, (0, 255, 0), -1)
+    
+    # Draw bounding box around each character
+    cv2.rectangle(frame_crop_color, (bx, by), (bx + w, by + h), (0, 255, 0), 2)
+    
+    # Draw center of mass
+    cv2.circle(frame_crop_color, (x, y), 3, (0, 0, 255), -1)
+    
+    # Display character number
+    #cv2.putText(frame_crop_color, f"({x},{y})", (bx, by - 5), 
+    #            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
+    cv2.putText(frame_crop_color, f"{len(centers)}", (bx, by - 5), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
 
-print(centers)
+print("Character centers (x, y, width, height, area):")
+for i, c in enumerate(centers):
+    print(f"  Character {i+1}: x={c[0]}, y={c[1]}, w={c[2]}, h={c[3]}, area={c[4]}")
+
+cv2.imshow('Characters with Bounding Boxes', frame_crop_color)
 
 
 
